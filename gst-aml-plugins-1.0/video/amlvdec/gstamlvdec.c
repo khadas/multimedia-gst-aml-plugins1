@@ -376,6 +376,7 @@ gst_aml_vdec_start(GstVideoDecoder * dec)
 	vrate=1.0;
 	amsysfs_set_sysfs_str("/sys/class/vfm/map", "rm default");
 	amsysfs_set_sysfs_str("/sys/class/vfm/map", "add default decoder ppmgr deinterlace amvideo");
+	amsysfs_set_sysfs_str("/sys/class/video/disable_video","2");
 	return TRUE;
 }
 
