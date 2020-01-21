@@ -87,6 +87,7 @@ common/Makefile
 video/amlvdec/Makefile
 video/amlvsink/Makefile
 audio/amladec/Makefile
-audio/amlasink/Makefile])
+audio/amlasink/Makefile
+audio/aml_audio_hal_sink/Makefile])
 AC_OUTPUT
 
