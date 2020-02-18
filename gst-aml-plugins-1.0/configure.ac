@@ -24,6 +24,16 @@ dnl required version of libtool
 LT_PREREQ([2.2.6])
 LT_INIT
 
+AC_ARG_ENABLE([aml_audio_hal_sink],
+              [  --enable_aml_audio_hal_sink    Turn on compile aml_audio_hal_sink],
+              [case "${enableval}" in
+               yes) aml_audio_hal_sink=true ;;
+               no)  aml_audio_hal_sink=false ;;
+               *) AC_MSG_ERROR([bad value ${enableval} for --enable_aml_audio_hal_sink]) ;;
+             esac],[aml_audio_hal_sink=false])
+AM_CONDITIONAL([AML_AUDIO_HAL_SINK_ENABLE], [test x$aml_audio_hal_sink = xtrue])
+
+
 dnl give error and exit if we don't have pkgconfig
 AC_CHECK_PROG(HAVE_PKGCONFIG, pkg-config, [ ], [
   AC_MSG_ERROR([You need to have pkg-config installed!])
@@ -82,7 +92,7 @@ dnl set proper LDFLAGS for plugins
 GST_PLUGIN_LDFLAGS='-module -avoid-version -export-symbols-regex [_]*\(gst_\|Gst\|GST_\).*'
 AC_SUBST(GST_PLUGIN_LDFLAGS)
 
-AC_CONFIG_FILES([Makefile 
+AC_CONFIG_FILES([Makefile
 common/Makefile
 video/amlvdec/Makefile
 video/amlvsink/Makefile
