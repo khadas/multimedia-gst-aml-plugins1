@@ -304,6 +304,7 @@ gst_amlringbuffer_release (GstAudioRingBuffer * buf)
   GstAmlRingBuffer *pbuf = GST_AMLRING_BUFFER_CAST (buf);
   GstAmlHalAsink *asink = pbuf->asink;
 
+  GST_DEBUG_OBJECT (asink, "enter");
   if (pbuf->stream_) {
     asink->hw_dev_->close_output_stream(asink->hw_dev_, pbuf->stream_);
     pbuf->stream_ = NULL;
@@ -321,17 +322,20 @@ gst_amlringbuffer_start (GstAudioRingBuffer * buf)
   GstAmlHalAsink *asink = pbuf->asink;
   int ret;
 
+  GST_DEBUG_OBJECT (asink, "enter");
   if (!pbuf->stream_) {
     GST_ERROR_OBJECT (asink, "null pointer");
     return FALSE;
   }
 
   if (pbuf->paused_) {
+#if 0
     ret = pbuf->stream_->resume(pbuf->stream_);
     if (ret) {
       GST_ERROR_OBJECT (asink, "resume failure:%d", ret);
       return FALSE;
     }
+#endif
     GST_DEBUG_OBJECT (asink, "resume");
     pbuf->paused_ = FALSE;
   }
@@ -346,6 +350,7 @@ gst_amlringbuffer_pause (GstAudioRingBuffer * buf)
   GstAmlHalAsink *asink = pbuf->asink;
   int ret;
 
+  GST_DEBUG_OBJECT (asink, "enter");
   if (!pbuf->stream_) {
     GST_ERROR_OBJECT (asink, "null pointer");
     return FALSE;
@@ -356,11 +361,13 @@ gst_amlringbuffer_pause (GstAudioRingBuffer * buf)
     return TRUE;
   }
 
+#if 0
   ret = pbuf->stream_->pause(pbuf->stream_);
   if (ret) {
     GST_ERROR_OBJECT (asink, "pause failure:%d", ret);
     return FALSE;
   }
+#endif
   pbuf->paused_ = TRUE;
   GST_DEBUG_OBJECT (asink, "pause");
   return TRUE;
@@ -374,6 +381,7 @@ gst_amlringbuffer_stop (GstAudioRingBuffer * buf)
   GstAmlHalAsink *asink = pbuf->asink;
   int ret;
 
+  GST_DEBUG_OBJECT (asink, "enter");
   if (!pbuf->stream_) {
     GST_ERROR_OBJECT (asink, "null pointer");
     return FALSE;
@@ -614,6 +622,11 @@ gst_amlringbuffer_commit (GstAudioRingBuffer * buf, guint64 * sample,
   }
 
   GST_LOG_OBJECT (asink, "entering commit");
+  if (pbuf->paused_) {
+    GST_WARNING_OBJECT (asink, "drop %d frame in pause state", bufsize/bpf);
+    return bufsize/bpf;
+  }
+
   while (towrite > 0) {
     int written;
     int cur_size;

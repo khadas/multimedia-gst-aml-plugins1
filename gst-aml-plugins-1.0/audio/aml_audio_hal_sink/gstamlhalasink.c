@@ -154,7 +154,7 @@ gst_aml_hal_asink_class_init (GstAmlHalAsinkClass * klass)
       &gst_aml_hal_asink_sink_template);
 
   gst_element_class_set_static_metadata (GST_ELEMENT_CLASS(klass),
-      "Amlogic audio HAL sink", "Generic", "gstream plugin to connecto audio HAL",
+      "Amlogic audio HAL sink", "Sink/Audio", "gstream plugin to connect AML audio HAL",
       "song.zhao@amlogic.com");
 
   gobject_class->set_property = gst_aml_hal_asink_set_property;
@@ -543,7 +543,7 @@ gst_aml_hal_sink_get_time (GstClock * clock, GstAudioBaseSink * sink)
 static gboolean
 plugin_init (GstPlugin * plugin)
 {
-  return gst_element_register (plugin, "amlhalasink", GST_RANK_NONE,
+  return gst_element_register (plugin, "amlhalasink", GST_RANK_PRIMARY,
       GST_TYPE_AML_HAL_ASINK);
 }
 
