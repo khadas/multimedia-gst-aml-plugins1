@@ -576,6 +576,7 @@ gst_amlringbuffer_commit (GstAudioRingBuffer * buf, guint64 * sample,
   guint bufsize, towrite;
   gint bpf;
   gboolean raw_data;
+  guint offset = 0;
 
   if (in_samples < 0 || in_samples != out_samples) {
     /* don't support negative rate */
@@ -636,8 +637,9 @@ gst_amlringbuffer_commit (GstAudioRingBuffer * buf, guint64 * sample,
     else
       cur_size = towrite;
 
-    written = pbuf->stream_->write(pbuf->stream_, data, cur_size);
+    written = pbuf->stream_->write(pbuf->stream_, data + offset, cur_size);
     towrite -= written;
+    offset += written;
 
 
     if (!raw_data) {
