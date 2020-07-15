@@ -41,6 +41,7 @@ typedef struct _GstAmlRingBuffer GstAmlRingBuffer;
 typedef struct _GstAmlRingBufferClass GstAmlRingBufferClass;
 
 #define is_raw_type(type) (type == GST_AUDIO_RING_BUFFER_FORMAT_TYPE_RAW)
+#define EXTEND_BUF_SIZE (4096*2*2)
 
 struct _GstAmlRingBuffer
 {
@@ -61,6 +62,8 @@ struct _GstAmlRingBuffer
   gboolean meta_parsed;
   guint frame_sent;
   struct timeval flush_time;
+  gboolean extend_channel;
+  uint8_t *extend_buf;
 };
 
 struct _GstAmlRingBufferClass
@@ -130,6 +133,8 @@ gst_amlringbuffer_init (GstAmlRingBuffer * pbuf)
   pbuf->encoded_size = 0;
   pbuf->frame_sent = 0;
   pbuf->flushed_ = FALSE;
+  pbuf->extend_channel = FALSE;
+  pbuf->extend_buf = NULL;
 }
 
 /* will be called when the device should be opened. In this case we will connect
@@ -161,6 +166,8 @@ gst_amlringbuffer_close_device (GstAudioRingBuffer * buf)
   if (pbuf->stream_)
     asink->hw_dev_->close_output_stream(asink->hw_dev_,
             pbuf->stream_);
+  if (pbuf->extend_buf)
+    g_free(pbuf->extend_buf);
 
   GST_LOG_OBJECT (asink, "closed device");
   return TRUE;
@@ -213,7 +220,15 @@ sink_parse_spec (GstAmlRingBuffer * pbuf, GstAudioRingBufferSpec * spec)
     pbuf->channel_mask_ = AUDIO_CHANNEL_OUT_5POINT1;
   else if (channels == 8)
     pbuf->channel_mask_ = AUDIO_CHANNEL_OUT_7POINT1;
-  else {
+  else if (channels == 1) {
+    pbuf->channel_mask_ = AUDIO_CHANNEL_OUT_STEREO;
+    pbuf->extend_channel = TRUE;
+    pbuf->extend_buf = g_malloc0(EXTEND_BUF_SIZE);
+    if (!pbuf->extend_buf) {
+      GST_DEBUG_OBJECT (asink, "oom");
+      goto error;
+    }
+  } else {
     GST_ERROR_OBJECT (asink, "unsupported channel number:%d", channels);
     goto error;
   }
@@ -320,7 +335,6 @@ gst_amlringbuffer_start (GstAudioRingBuffer * buf)
 {
   GstAmlRingBuffer *pbuf = GST_AMLRING_BUFFER_CAST (buf);
   GstAmlHalAsink *asink = pbuf->asink;
-  int ret;
 
   GST_DEBUG_OBJECT (asink, "enter");
   if (!pbuf->stream_) {
@@ -330,6 +344,7 @@ gst_amlringbuffer_start (GstAudioRingBuffer * buf)
 
   if (pbuf->paused_) {
 #if 0
+    int ret;
     ret = pbuf->stream_->resume(pbuf->stream_);
     if (ret) {
       GST_ERROR_OBJECT (asink, "resume failure:%d", ret);
@@ -348,7 +363,6 @@ gst_amlringbuffer_pause (GstAudioRingBuffer * buf)
 {
   GstAmlRingBuffer *pbuf = GST_AMLRING_BUFFER_CAST (buf);
   GstAmlHalAsink *asink = pbuf->asink;
-  int ret;
 
   GST_DEBUG_OBJECT (asink, "enter");
   if (!pbuf->stream_) {
@@ -362,6 +376,7 @@ gst_amlringbuffer_pause (GstAudioRingBuffer * buf)
   }
 
 #if 0
+  int ret;
   ret = pbuf->stream_->pause(pbuf->stream_);
   if (ret) {
     GST_ERROR_OBJECT (asink, "pause failure:%d", ret);
@@ -416,7 +431,7 @@ gst_amlringbuffer_clear (GstAudioRingBuffer * buf)
     gint total = FLUSH_DATA_SIZE;
     gint written = 0;
 
-    guchar *data = (guchar *)malloc(FLUSH_DATA_SIZE);
+    guchar *data = (guchar *)g_malloc0(FLUSH_DATA_SIZE);
     if (!data) {
       GST_ERROR_OBJECT (asink, "oom");
       return;
@@ -426,7 +441,7 @@ gst_amlringbuffer_clear (GstAudioRingBuffer * buf)
       written = pbuf->stream_->write(pbuf->stream_, data, total);
       total -= written;
     }
-    free(data);
+    g_free(data);
     GST_DEBUG_OBJECT (asink, "clear done");
   } else {
     GST_DEBUG_OBJECT (asink, "flush bitstream frame_sent:%d", pbuf->frame_sent);
@@ -628,6 +643,27 @@ gst_amlringbuffer_commit (GstAudioRingBuffer * buf, guint64 * sample,
     return bufsize/bpf;
   }
 
+  /* handle 1 channel PCM */
+  if (pbuf->extend_channel && raw_data) {
+    uint8_t *from = data, *to = pbuf->extend_buf;
+    int i;
+
+    towrite *= 2;
+    if (towrite > EXTEND_BUF_SIZE) {
+      GST_ERROR_OBJECT (asink, "extend buff too small %d vs %d", towrite, EXTEND_BUF_SIZE);
+      return 0;
+    }
+    for (i = 0 ; i < in_samples ; i++) {
+      memcpy(to, from, bpf);
+      to += bpf;
+      memcpy(to, from, bpf);
+      to += bpf;
+      from += bpf;
+    }
+    data = pbuf->extend_buf;
+    bpf *= 2;
+  }
+
   while (towrite > 0) {
     int written;
     int cur_size;
@@ -652,7 +688,7 @@ gst_amlringbuffer_commit (GstAudioRingBuffer * buf, guint64 * sample,
         "write %d/%d left %d sample:%lld", written, cur_size, towrite, *sample);
   }
 
-  return (bufsize - towrite)/bpf;
+  return in_samples;
 }
 
 static GstClockTime
