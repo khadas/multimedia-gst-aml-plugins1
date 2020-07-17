@@ -14,7 +14,7 @@ plugin_LTLIBRARIES = libgstamlhalasink.la
 ##############################################################################
 
 # sources used to compile this plug-in
-libgstamlhalasink_la_SOURCES = gstamlhalasink.c
+libgstamlhalasink_la_SOURCES = gstamlhalasink_new.c
 
 # compiler and linker flags used to compile this plugin, set in configure.ac
 libgstamlhalasink_la_CFLAGS = $(GST_CFLAGS)
