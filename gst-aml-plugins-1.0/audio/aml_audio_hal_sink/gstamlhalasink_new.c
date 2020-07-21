@@ -518,13 +518,16 @@ static GstClockTime gst_aml_hal_asink_get_time (GstClock * clock, GstAmlHalAsink
   GstAmlHalAsinkPrivate *priv = sink->priv;
   uint32_t pcr = 0;
 
-  if (!priv->tsync_enable_ || !priv->render_samples) {
-    GST_DEBUG_OBJECT(sink, "tsync_enable_ %d render_samples %llu", priv->tsync_enable_, priv->render_samples);
+  if (!priv->tsync_enable_) {
+    GST_TRACE_OBJECT(sink, "tsync disabled");
     return result;
   }
-
-  get_sysfs_uint32(TSYNC_PCRSCR, &pcr);
-  result = gst_util_uint64_scale_int (pcr, GST_SECOND, PTS_90K);
+  if (!priv->render_samples) {
+    result = priv->segment.start;
+  } else {
+    get_sysfs_uint32(TSYNC_PCRSCR, &pcr);
+    result = gst_util_uint64_scale_int (pcr, GST_SECOND, PTS_90K);
+  }
 
   GST_LOG_OBJECT (sink, "time %" GST_TIME_FORMAT " 0x%x", GST_TIME_ARGS (result), pcr);
   return result;
@@ -978,13 +981,15 @@ gst_aml_hal_asink_event (GstAmlHalAsink *sink, GstEvent * event)
     case GST_EVENT_FLUSH_START:
     {
       GST_DEBUG_OBJECT (sink, "flush start");
+
       GST_OBJECT_LOCK (sink);
-      if (priv->paused_)
-        hal_start (sink);
       priv->received_eos = FALSE;
       priv->flushing_ = TRUE;
+      /* unblock hal_commit() */
+      g_mutex_lock(&priv->feed_lock);
+      g_cond_signal (&priv->run_ready);
+      g_mutex_unlock(&priv->feed_lock);
       GST_OBJECT_UNLOCK (sink);
-
       break;
     }
     case GST_EVENT_FLUSH_STOP:
@@ -995,11 +1000,10 @@ gst_aml_hal_asink_event (GstAmlHalAsink *sink, GstEvent * event)
       GST_DEBUG_OBJECT (sink, "flush stop");
       GST_OBJECT_LOCK (sink);
       hal_stop (sink);
-      hal_start (sink);
+      tsync_enable (sink, TRUE);
       GST_OBJECT_UNLOCK (sink);
 
       gst_aml_hal_asink_reset_sync (sink);
-
       if (reset_time) {
         GST_DEBUG_OBJECT (sink, "posting reset-time message");
         gst_element_post_message (GST_ELEMENT_CAST (sink),
@@ -1222,6 +1226,8 @@ gst_aml_hal_asink_change_state (GstElement * element,
       GST_DEBUG_OBJECT(sink, "ready to paused");
       gst_base_sink_set_async_enabled (GST_BASE_SINK_CAST(sink), FALSE);
       gst_aml_hal_asink_reset_sync (sink);
+      /* start in paused state until PLAYING */
+      priv->paused_ = TRUE;
 
       /* Only post clock-provide messages if this is the clock that
        * we've created. If the subclass has overriden it the subclass
@@ -1590,6 +1596,7 @@ static int tsync_enable (GstAmlHalAsink * sink, gboolean enable)
   return 0;
 }
 
+#define HAL_WRONG_STAT 3
 static gboolean hal_start (GstAmlHalAsink * sink)
 {
   GstAmlHalAsinkPrivate *priv = sink->priv;
@@ -1603,7 +1610,9 @@ static gboolean hal_start (GstAmlHalAsink * sink)
       int ret;
 
       ret = priv->stream_->resume(priv->stream_);
-      if (ret) {
+      if (ret && ret != HAL_WRONG_STAT) {
+        /* Not be in paused state due to flush,
+         * so resume may fail */
         g_mutex_unlock(&priv->feed_lock);
         GST_ERROR_OBJECT (sink, "resume failure:%d", ret);
         return FALSE;
@@ -1993,7 +2002,7 @@ static guint hal_commit (GstAmlHalAsink * sink, guchar * data,
     }
 
     GST_LOG_OBJECT (sink,
-        "write %d/%d left %d", written, cur_size, towrite);
+        "write %d/%d left %d ts: %llu", written, cur_size, towrite, pts_64);
   }
 
   if (!raw_data)
