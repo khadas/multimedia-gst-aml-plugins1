@@ -38,6 +38,7 @@ GST_DEBUG_CATEGORY_STATIC (gst_aml_hal_asink_debug_category);
 #define GST_AML_HAL_ASINK_GET_PRIVATE(obj)  \
    (G_TYPE_INSTANCE_GET_PRIVATE ((obj), GST_TYPE_AML_HAL_ASINK, GstAmlHalAsinkPrivate))
 
+//#define DUMP_TO_FILE
 #define DEFAULT_VOLUME          1.0
 #define MAX_VOLUME              1.0
 #define MAX_DIRECT_BUF_SIZE     0x8000 //32KB
@@ -51,6 +52,10 @@ GST_DEBUG_CATEGORY_STATIC (gst_aml_hal_asink_debug_category);
 #define TSYNC_MODE   "/sys/class/tsync/mode"
 #define TSYNC_PCRSCR "/sys/class/tsync/pts_pcrscr"
 #define PTS_90K 90000
+
+#ifdef DUMP_TO_FILE
+static guint file_index;
+#endif
 
 struct _GstAmlHalAsinkPrivate
 {
@@ -1009,6 +1014,9 @@ gst_aml_hal_asink_event (GstAmlHalAsink *sink, GstEvent * event)
         gst_element_post_message (GST_ELEMENT_CAST (sink),
             gst_message_new_reset_time (GST_OBJECT_CAST (sink), 0));
       }
+#ifdef DUMP_TO_FILE
+    file_index++;
+#endif
       break;
     }
     case GST_EVENT_SEGMENT:
@@ -1892,6 +1900,21 @@ static void hw_sync_set_offset(struct hw_sync_header_v2* header, uint32_t offset
   header->offset[3] = (offset & 0xFF);
 }
 
+#ifdef DUMP_TO_FILE
+static void dump(const char* path, const uint8_t *data, int size) {
+    char name[50];
+    FILE* fd;
+
+    sprintf(name, "%s%d.dat", path, file_index);
+    fd = fopen(name, "ab");
+
+    if (!fd)
+        return;
+    fwrite(data, 1, size, fd);
+    fclose(fd);
+}
+#endif
+
 static guint hal_commit (GstAmlHalAsink * sink, guchar * data,
     gint size, guint64 pts_64)
 {
@@ -1947,6 +1970,10 @@ static guint hal_commit (GstAmlHalAsink * sink, guchar * data,
     }
     data = priv->extend_buf;
   }
+
+#ifdef DUMP_TO_FILE
+  dump ("/data/asink_", data, towrite);
+#endif
 
   while (towrite > 0) {
     int written;
