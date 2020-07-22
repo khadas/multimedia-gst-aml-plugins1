@@ -1603,7 +1603,8 @@ static gboolean hal_start (GstAmlHalAsink * sink)
   GST_DEBUG_OBJECT (sink, "enter");
 
   if (!priv->stream_) {
-    GST_INFO_OBJECT (sink, "start not created yet");
+    GST_INFO_OBJECT (sink, "stream not created yet");
+    priv->paused_ = FALSE;
   } else {
     g_mutex_lock(&priv->feed_lock);
     if (priv->paused_) {
