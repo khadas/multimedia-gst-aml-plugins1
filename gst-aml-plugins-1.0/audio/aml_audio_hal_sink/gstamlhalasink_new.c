@@ -96,10 +96,6 @@ struct _GstAmlHalAsinkPrivate
   gboolean meta_parsed;
   guint frame_sent;
 
-  /* for 1 ch extend */
-  gboolean extend_channel;
-  uint8_t *extend_buf;
-
   /* for hw sync mode */
   uint8_t *direct_buf;
 
@@ -134,7 +130,7 @@ GST_STATIC_PAD_TEMPLATE ("sink",
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS (
       "audio/x-raw,format=S16LE,rate=48000,"
-      "channels=[1,32],layout=interleaved; "
+      "channels=2,layout=interleaved; "
       "audio/x-ac3, "
       COMMON_AUDIO_CAPS "; "
       "audio/x-eac3, "
@@ -316,8 +312,6 @@ gst_aml_hal_asink_init (GstAmlHalAsink* sink)
   priv->direct_mode_ = TRUE;
   priv->quit_clock_wait = FALSE;
   priv->received_eos = FALSE;
-  priv->extend_channel = FALSE;
-  priv->extend_buf = NULL;
   g_mutex_init (&priv->feed_lock);
   g_cond_init (&priv->run_ready);
 }
@@ -335,8 +329,6 @@ gst_aml_hal_asink_dispose (GObject * object)
   }
 
   gst_aml_hal_asink_close (sink);
-  if (priv->extend_buf)
-    g_free(priv->extend_buf);
   g_mutex_clear (&priv->feed_lock);
   g_cond_clear (&priv->run_ready);
   G_OBJECT_CLASS (parent_class)->dispose (object);
@@ -1452,20 +1444,8 @@ hal_parse_spec (GstAmlHalAsink * sink, GstAudioRingBufferSpec * spec)
     goto error;
   }
 
-  if (channels == 2)
+  if (channels == 2) {
     priv->channel_mask_ = AUDIO_CHANNEL_OUT_STEREO;
-  else if (channels == 6)
-    priv->channel_mask_ = AUDIO_CHANNEL_OUT_5POINT1;
-  else if (channels == 8)
-    priv->channel_mask_ = AUDIO_CHANNEL_OUT_7POINT1;
-  else if (channels == 1) {
-    priv->channel_mask_ = AUDIO_CHANNEL_OUT_STEREO;
-    priv->extend_channel = TRUE;
-    priv->extend_buf = g_malloc0(EXTEND_BUF_SIZE);
-    if (!priv->extend_buf) {
-      GST_DEBUG_OBJECT (sink, "oom");
-      goto error;
-    }
   } else {
     GST_ERROR_OBJECT (sink, "unsupported channel number:%d", channels);
     goto error;
@@ -1942,33 +1922,6 @@ static guint hal_commit (GstAmlHalAsink * sink, guchar * data,
       GST_ERROR_OBJECT(sink, "not frame aligned %d %d", towrite, priv->encoded_size);
       return 0;
     }
-  }
-
-  /* handle 1 channel PCM */
-  if (priv->extend_channel && raw_data) {
-    uint8_t *from = data, *to = priv->extend_buf;
-    int i;
-    gint bpf = GST_AUDIO_INFO_BPF (&priv->spec.info);
-    int in_samples = 0;
-
-    if (bpf)
-      in_samples = size/bpf;
-    if (!in_samples)
-      return 0;
-
-    towrite *= 2;
-    if (towrite > EXTEND_BUF_SIZE) {
-      GST_ERROR_OBJECT (sink, "extend buff too small %d vs %d", towrite, EXTEND_BUF_SIZE);
-      return 0;
-    }
-    for (i = 0 ; i < in_samples ; i++) {
-      memcpy(to, from, bpf);
-      to += bpf;
-      memcpy(to, from, bpf);
-      to += bpf;
-      from += bpf;
-    }
-    data = priv->extend_buf;
   }
 
 #ifdef DUMP_TO_FILE
