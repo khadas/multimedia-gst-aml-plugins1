@@ -105,7 +105,9 @@ struct _GstAmlHalAsinkPrivate
   GstClockTime last_ts;
   guint64 render_samples;
 
-  GstSegment     segment;
+  GstSegment segment;
+  /* curent stream group */
+  guint group_id;
 };
 
 enum
@@ -312,6 +314,7 @@ gst_aml_hal_asink_init (GstAmlHalAsink* sink)
   priv->direct_mode_ = TRUE;
   priv->quit_clock_wait = FALSE;
   priv->received_eos = FALSE;
+  priv->group_id = -1;
   g_mutex_init (&priv->feed_lock);
   g_cond_init (&priv->run_ready);
 }
@@ -911,7 +914,6 @@ gst_aml_hal_asink_wait_event (GstBaseSink * bsink, GstEvent * event)
   /* For both gap and EOS events, make sure the ringbuffer is running
    * before trying to wait on the event! */
   switch (GST_EVENT_TYPE (event)) {
-    //case GST_EVENT_EOS:
     case GST_EVENT_GAP:
       /* We must have a negotiated format before starting the ringbuffer */
       if (G_UNLIKELY (!priv->stream_)) {
@@ -1017,6 +1019,34 @@ gst_aml_hal_asink_event (GstAmlHalAsink *sink, GstEvent * event)
       GST_DEBUG_OBJECT (sink, "configured segment %" GST_SEGMENT_FORMAT,
           &priv->segment);
       break;
+    }
+    case GST_EVENT_STREAM_START:
+    {
+      guint group_id;
+
+      gst_event_parse_group_id (event, &group_id);
+      GST_DEBUG_OBJECT (sink, "group change from %d to %d",
+          priv->group_id, group_id);
+      priv->group_id = group_id;
+      GST_DEBUG_OBJECT (sink, "stream start, gid %d", group_id);
+      return GST_BASE_SINK_CLASS (parent_class)->event (bsink, event);
+    }
+    case GST_EVENT_STREAM_GROUP_DONE:
+    {
+      guint group_id;
+
+      gst_event_parse_stream_group_done (event, &group_id);
+      if (priv->group_id != group_id) {
+        GST_ERROR_OBJECT (sink, "group id not match: %d vs %d",
+            priv->group_id, group_id);
+        goto done;
+      }
+      GST_DEBUG_OBJECT (sink, "stream group done, gid %d", group_id);
+      GST_OBJECT_LOCK (sink);
+      hal_stop (sink);
+      tsync_enable (sink, TRUE);
+      GST_OBJECT_UNLOCK (sink);
+      gst_aml_hal_asink_reset_sync (sink);
     }
     default:
     {
