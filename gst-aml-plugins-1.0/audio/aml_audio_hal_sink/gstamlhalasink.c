@@ -85,7 +85,7 @@ GST_STATIC_PAD_TEMPLATE ("sink",
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS (
       "audio/x-raw,format=S16LE,rate=48000,"
-      "channels=[1,32],layout=interleaved; "
+      "channels=2,layout=interleaved; "
       "audio/x-ac3, "
       COMMON_AUDIO_CAPS "; "
       "audio/x-eac3, "
