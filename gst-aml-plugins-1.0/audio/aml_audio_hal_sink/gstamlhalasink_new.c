@@ -31,6 +31,7 @@
 #include <gst/audio/audio.h>
 #include <audio_if_client.h>
 #include "gstamlhalasink_new.h"
+#include "ac4_frame_parse.h"
 
 GST_DEBUG_CATEGORY_STATIC (gst_aml_hal_asink_debug_category);
 #define GST_CAT_DEFAULT gst_aml_hal_asink_debug_category
@@ -41,11 +42,18 @@ GST_DEBUG_CATEGORY_STATIC (gst_aml_hal_asink_debug_category);
 //#define DUMP_TO_FILE
 #define DEFAULT_VOLUME          1.0
 #define MAX_VOLUME              1.0
-#define MAX_DIRECT_BUF_SIZE     0x8000 //32KB
+
+#define MAX_TRANS_BUF_SIZE     0x8040
+#define TRANS_DATA_OFFSET      0x40
+//32KB
+#define TRANS_DATA_SIZE        (MAX_TRANS_BUF_SIZE - TRANS_DATA_OFFSET)
+
 #define is_raw_type(type) (type == GST_AUDIO_RING_BUFFER_FORMAT_TYPE_RAW)
 #define EXTEND_BUF_SIZE (4096*2*2)
 #define DEFAULT_BUFFER_TIME     ((200 * GST_MSECOND) / GST_USECOND)
 #define DEFAULT_LATENCY_TIME    ((10 * GST_MSECOND) / GST_USECOND)
+
+#define GST_AUDIO_FORMAT_TYPE_AC4 100
 
 #define TSYNC_ENABLE "/sys/class/tsync/enable"
 #define TSYNC_EVENT  "/sys/class/tsync/event"
@@ -95,9 +103,10 @@ struct _GstAmlHalAsinkPrivate
   guint sample_per_frame;
   gboolean meta_parsed;
   guint frame_sent;
+  gboolean sync_frame;
 
-  /* for hw sync mode */
-  uint8_t *direct_buf;
+  /* for header attaching */
+  uint8_t *trans_buf;
 
   gboolean quit_clock_wait;
   GstClockTime eos_time;
@@ -137,6 +146,7 @@ GST_STATIC_PAD_TEMPLATE ("sink",
       COMMON_AUDIO_CAPS "; "
       "audio/x-eac3, "
       COMMON_AUDIO_CAPS "; "
+      "audio/x-ac4; "
       )
     );
 
@@ -215,6 +225,7 @@ static uint32_t hal_get_latency (GstAmlHalAsink * sink);
 static int config_sys_node(const char* path, const char* value);
 static int get_sysfs_uint32(const char *path, uint32_t *value);
 static int tsync_enable (GstAmlHalAsink * sink, gboolean enable);
+static void dump(const char* path, const uint8_t *data, int size);
 
 static void
 gst_aml_hal_asink_class_init (GstAmlHalAsinkClass * klass)
@@ -499,11 +510,11 @@ static int get_sysfs_uint32(const char *path, uint32_t *value)
         valstr[strlen(valstr)] = '\0';
         close(fd);
     } else {
-        printf("unable to open file %s\n", path);
+        GST_ERROR("unable to open file %s", path);
         return -1;
     }
     if (sscanf(valstr, "0x%x", &val) < 1) {
-        printf("unable to get pts from: %s", valstr);
+        GST_ERROR("unable to get pts from: %s", valstr);
         return -1;
     }
     *value = val;
@@ -680,6 +691,12 @@ parse_caps (GstAudioRingBufferSpec * spec, GstCaps * caps)
     gst_structure_get_int (structure, "channels", &info.channels);
     spec->type = GST_AUDIO_RING_BUFFER_FORMAT_TYPE_AC3;
     info.bpf = 4;
+  } else if (g_str_equal (mimetype, "audio/x-ac4")) {
+    spec->type = GST_AUDIO_FORMAT_TYPE_AC4;
+    /* to pass the sanity check in render() */
+    info.bpf = 1;
+    info.channels = 2;
+    info.rate = 48000;
   } else if (g_str_equal (mimetype, "audio/x-eac3")) {
     /* extract the needed information from the cap */
     if (!(gst_structure_get_int (structure, "rate", &info.rate)))
@@ -1131,7 +1148,11 @@ gst_aml_hal_asink_render (GstAmlHalAsink * sink, GstBuffer * buf)
   if (G_UNLIKELY (size % bpf) != 0)
     goto wrong_size;
 
-  samples = size / bpf;
+  if (is_raw_type(priv->spec.type))
+    samples = size / bpf;
+  else
+    samples = priv->sample_per_frame;
+
   time = GST_BUFFER_TIMESTAMP (buf);
 
   if (!GST_CLOCK_TIME_IS_VALID (time) ||
@@ -1214,7 +1235,7 @@ wrong_state:
   }
 wrong_size:
   {
-    GST_DEBUG_OBJECT (sink, "wrong size");
+    GST_ERROR_OBJECT (sink, "wrong size %d/%d", size, bpf);
     GST_ELEMENT_ERROR (sink, STREAM, WRONG_TYPE,
         (NULL), ("sink received buffer of wrong size."));
     ret = GST_FLOW_ERROR;
@@ -1414,8 +1435,8 @@ static gboolean hal_open_device (GstAmlHalAsink * sink)
   GstAmlHalAsinkPrivate *priv = sink->priv;
 
   if (priv->direct_mode_) {
-    priv->direct_buf = (uint8_t *)g_malloc(MAX_DIRECT_BUF_SIZE);
-    if (!priv->direct_buf) {
+    priv->trans_buf = (uint8_t *)g_malloc(MAX_TRANS_BUF_SIZE);
+    if (!priv->trans_buf) {
       GST_ERROR_OBJECT (sink, "OOM");
       return FALSE;
     }
@@ -1434,8 +1455,8 @@ static gboolean hal_close_device (GstAmlHalAsink* sink)
     priv->hw_dev_->close_output_stream(priv->hw_dev_,
         priv->stream_);
 
-  if (priv->direct_buf)
-    g_free(priv->direct_buf);
+  if (priv->trans_buf)
+    g_free(priv->trans_buf);
   GST_LOG_OBJECT (sink, "closed device");
   return TRUE;
 }
@@ -1458,6 +1479,9 @@ hal_parse_spec (GstAmlHalAsink * sink, GstAudioRingBufferSpec * spec)
       break;
     case GST_AUDIO_RING_BUFFER_FORMAT_TYPE_AC3:
       priv->format_ = AUDIO_FORMAT_AC3;
+      break;
+    case GST_AUDIO_FORMAT_TYPE_AC4:
+      priv->format_ = AUDIO_FORMAT_AC4;
       break;
     case GST_AUDIO_RING_BUFFER_FORMAT_TYPE_EAC3:
       priv->format_ = AUDIO_FORMAT_E_AC3;
@@ -1582,11 +1606,11 @@ static int config_sys_node(const char* path, const char* value)
   int fd;
   fd = open(path, O_RDWR);
   if (fd < 0) {
-    printf("fail to open %s\n", path);
+    GST_ERROR("fail to open %s", path);
     return -1;
   }
   if (write(fd, value, strlen(value)) != strlen(value)) {
-    printf("fail to write %s to %s\n", value, path);
+    GST_ERROR("fail to write %s to %s", value, path);
     close(fd);
     return -1;
   }
@@ -1867,6 +1891,21 @@ static int parse_bit_stream(GstAmlHalAsink *sink,
         priv->encoded_size, priv->sample_per_frame);
     return 0;
 
+  } else if (spec->type == GST_AUDIO_FORMAT_TYPE_AC4) {
+    struct ac4_info info;
+
+    if (ac4_toc_parse(data, size, &info)) {
+      GST_ERROR_OBJECT (sink, "parse ac4 fail");
+      dump("/tmp/ac4.dat", data, size);
+      return -1;
+    }
+    priv->sample_per_frame = info.samples_per_frame;
+    priv->sr_ = info.frame_rate;
+    priv->spec.info.rate = priv->sr_;
+    priv->sync_frame = info.sync_frame;
+    GST_INFO_OBJECT (sink, "sr:%d spf:%d sync:%d",
+      priv->sr_, priv->sample_per_frame, priv->sync_frame);
+    return 0;
   }
   return -1;
 }
@@ -1914,8 +1953,8 @@ static void hw_sync_set_offset(struct hw_sync_header_v2* header, uint32_t offset
   header->offset[3] = (offset & 0xFF);
 }
 
-#ifdef DUMP_TO_FILE
 static void dump(const char* path, const uint8_t *data, int size) {
+#ifdef DUMP_TO_FILE
     char name[50];
     FILE* fd;
 
@@ -1926,8 +1965,8 @@ static void dump(const char* path, const uint8_t *data, int size) {
         return;
     fwrite(data, 1, size, fd);
     fclose(fd);
-}
 #endif
+}
 
 static guint hal_commit (GstAmlHalAsink * sink, guchar * data,
     gint size, guint64 pts_64)
@@ -1949,8 +1988,13 @@ static guint hal_commit (GstAmlHalAsink * sink, guchar * data,
       priv->meta_parsed = TRUE;
   }
 
+  dump ("/data/asink_", data, towrite);
+
   /* Frame aligned */
-  if (!raw_data) {
+  /* AC4 has constant bit rate (CBR) and variable bit reate(VBR) streams
+   * And VBR doesn't have to be encoded size aligned
+   */
+  if (!raw_data && priv->format_ != AUDIO_FORMAT_AC4) {
     g_assert(priv->encoded_size);
     if (towrite % priv->encoded_size) {
       GST_ERROR_OBJECT(sink, "not frame aligned %d %d", towrite, priv->encoded_size);
@@ -1958,31 +2002,61 @@ static guint hal_commit (GstAmlHalAsink * sink, guchar * data,
     }
   }
 
-#ifdef DUMP_TO_FILE
-  dump ("/data/asink_", data, towrite);
-#endif
-
   while (towrite > 0) {
+    gboolean trans = false;
+    int header_size = 0;
     int written;
     int cur_size;
     uint64_t pts_inc = 0;
-    guchar * direct_data = NULL;
+    guchar * trans_data = NULL;
 
-    if (!raw_data)
+    if (!raw_data && priv->format_ != AUDIO_FORMAT_AC4)
       cur_size = priv->encoded_size;
     else
       cur_size = towrite;
 
-    if (priv->direct_mode_) {
-      struct hw_sync_header_v2 *hw_sync = (struct hw_sync_header_v2 *)priv->direct_buf;
+    if (priv->format_ == AUDIO_FORMAT_AC4 && !priv->sync_frame) {
+        int32_t ac4_header_len;
+        uint8_t *header;
 
-      if (cur_size > MAX_DIRECT_BUF_SIZE - hw_header_s) {
-        GST_ERROR_OBJECT(sink, "frame too big %d", cur_size);
-        return offset;
-      }
-      memcpy(priv->direct_buf + sizeof (*hw_sync),
+        header = ac4_syncframe_header(towrite, &ac4_header_len);
+        header_size += ac4_header_len;
+
+        if (cur_size > TRANS_DATA_SIZE) {
+          GST_ERROR_OBJECT(sink, "frame too big %d", cur_size);
+          return offset;
+        }
+        memcpy(priv->trans_buf + TRANS_DATA_OFFSET,
+                data, cur_size);
+        trans_data = priv->trans_buf + TRANS_DATA_OFFSET - ac4_header_len;
+        memcpy(trans_data, header, ac4_header_len);
+        cur_size += ac4_header_len;
+        trans = true;
+    }
+    if (priv->direct_mode_) {
+      struct hw_sync_header_v2 *hw_sync;
+
+      if (!trans) {
+        hw_sync = (struct hw_sync_header_v2 *)priv->trans_buf;
+
+        if (cur_size > MAX_TRANS_BUF_SIZE - hw_header_s) {
+          GST_ERROR_OBJECT(sink, "frame too big %d", cur_size);
+          return offset;
+        }
+        memcpy(priv->trans_buf + sizeof (*hw_sync),
           data, cur_size);
-      direct_data = priv->direct_buf;
+        trans_data = priv->trans_buf;
+        header_size += hw_header_s;
+        trans = true;
+      } else {
+        header_size += hw_header_s;
+        if (header_size > TRANS_DATA_OFFSET) {
+          GST_ERROR_OBJECT(sink, "header too big %d", header_size);
+          return offset;
+        }
+        hw_sync = (struct hw_sync_header_v2 *)(trans_data - hw_header_s);
+        trans_data -= hw_header_s;
+      }
 
       hw_sync_set_ver(hw_sync);
       hw_sync_set_size(hw_sync, cur_size);
@@ -1991,12 +2065,12 @@ static guint hal_commit (GstAmlHalAsink * sink, guchar * data,
       cur_size += hw_header_s;
     }
 
-    if (priv->direct_mode_) {
-      written = priv->stream_->write(priv->stream_, direct_data, cur_size);
+    if (trans) {
+      written = priv->stream_->write(priv->stream_, trans_data, cur_size);
       if (written ==  cur_size)
-        written -= hw_header_s;
+        written -= header_size;
       else {
-        GST_ERROR_OBJECT (sink, "direct mode write fail %d/%d", written, cur_size);
+        GST_ERROR_OBJECT (sink, "trans mode write fail %d/%d", written, cur_size);
         return written;
       }
     } else {
