@@ -101,7 +101,6 @@ struct _GstAmlHalAsinkPrivate
   /* for bit stream */
   guint encoded_size;
   guint sample_per_frame;
-  gboolean meta_parsed;
   guint frame_sent;
   gboolean sync_frame;
 
@@ -1815,6 +1814,7 @@ static int parse_bit_stream(GstAmlHalAsink *sink,
   GstAudioRingBufferSpec * spec = &priv->spec;
 
   if (spec->type == GST_AUDIO_RING_BUFFER_FORMAT_TYPE_AC3) {
+    /* Digital Audio Compression Standard (AC-3 E-AC-3) 5.3 */
     guint8 frmsizecod;
     guint8 fscod;
 
@@ -1829,7 +1829,7 @@ static int parse_bit_stream(GstAmlHalAsink *sink,
     fscod = (data[4] >> 6);
     frmsizecod = data[4]&0x3F;
 
-    GST_DEBUG_OBJECT (sink, "fscod:%d frmsizecod:%d", fscod, frmsizecod);
+    GST_LOG_OBJECT (sink, "fscod:%d frmsizecod:%d", fscod, frmsizecod);
     if (fscod > 2)
       return -1;
     if (frmsizecod > 37)
@@ -1837,9 +1837,10 @@ static int parse_bit_stream(GstAmlHalAsink *sink,
 
     priv->encoded_size = table_5_13[frmsizecod][2 - fscod] * 2;
     priv->sample_per_frame = 1536;
-    GST_DEBUG_OBJECT (sink, "encoded_size:%d", priv->encoded_size);
+    GST_LOG_OBJECT (sink, "encoded_size:%d", priv->encoded_size);
     return 0;
   } else if (spec->type == GST_AUDIO_RING_BUFFER_FORMAT_TYPE_EAC3) {
+    /* Digital Audio Compression Standard (AC-3 E-AC-3) Annex E */
     guint16 frmsizecod;
     guint8 fscod, fscod2;
     guint8 numblkscod;
@@ -1855,7 +1856,7 @@ static int parse_bit_stream(GstAmlHalAsink *sink,
     fscod = (data[4] >> 6);
     frmsizecod = data[3] + ((data[2]&0x7) << 8) + 1;
 
-    GST_DEBUG_OBJECT (sink, "fscod:%d frmsizecod:%d", fscod, frmsizecod);
+    GST_LOG_OBJECT (sink, "fscod:%d frmsizecod:%d", fscod, frmsizecod);
     if (fscod > 3)
       return -1;
     if (frmsizecod > 2048)
@@ -1863,7 +1864,7 @@ static int parse_bit_stream(GstAmlHalAsink *sink,
 
     if (fscod == 3) {
       fscod2 = (data[4] >> 4) & 0x3;
-      GST_DEBUG_OBJECT (sink, "fscod2:%d", fscod2);
+      GST_LOG_OBJECT (sink, "fscod2:%d", fscod2);
       if (fscod2 == 0)
         priv->sr_ = 24000;
       else if (fscod2 == 1)
@@ -1876,7 +1877,7 @@ static int parse_bit_stream(GstAmlHalAsink *sink,
       priv->sample_per_frame = 256*6;
     } else {
       numblkscod = (data[4] >> 4) & 0x3;
-      GST_DEBUG_OBJECT (sink, "numblkscod:%d", numblkscod);
+      GST_LOG_OBJECT (sink, "numblkscod:%d", numblkscod);
       if (numblkscod == 0)
         priv->sample_per_frame = 256;
       else if (numblkscod == 1)
@@ -1887,7 +1888,7 @@ static int parse_bit_stream(GstAmlHalAsink *sink,
         priv->sample_per_frame = 256 * 6;
     }
     priv->encoded_size = frmsizecod * 2;
-    GST_DEBUG_OBJECT (sink, "encoded_size:%d spf:%d",
+    GST_LOG_OBJECT (sink, "encoded_size:%d spf:%d",
         priv->encoded_size, priv->sample_per_frame);
     return 0;
 
@@ -1975,18 +1976,11 @@ static guint hal_commit (GstAmlHalAsink * sink, guchar * data,
   guint towrite;
   gboolean raw_data;
   guint offset = 0;
+  guint parsed = 0;
   guint hw_header_s = sizeof (struct hw_sync_header_v2);
 
   raw_data = is_raw_type(priv->spec.type);
   towrite = size;
-
-  if (!raw_data && !priv->meta_parsed) {
-    if (parse_bit_stream(sink, data, towrite)) {
-      GST_WARNING_OBJECT(sink, "parse header info fails, discard %d bytes", size);
-      return size;
-    } else
-      priv->meta_parsed = TRUE;
-  }
 
   dump ("/data/asink_", data, towrite);
 
@@ -1995,9 +1989,12 @@ static guint hal_commit (GstAmlHalAsink * sink, guchar * data,
    * And VBR doesn't have to be encoded size aligned
    */
   if (!raw_data && priv->format_ != AUDIO_FORMAT_AC4) {
-    g_assert(priv->encoded_size);
-    if (towrite % priv->encoded_size) {
+    while (!parse_bit_stream(sink, data + parsed, towrite - parsed)
+            && parsed < towrite)
+      parsed += priv->encoded_size;
+    if (parsed != towrite) {
       GST_ERROR_OBJECT(sink, "not frame aligned %d %d", towrite, priv->encoded_size);
+      //dump("/tmp/err.dat", data, towrite);
       return 0;
     }
   }
