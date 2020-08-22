@@ -117,6 +117,7 @@ struct _GstAmlHalAsinkPrivate
   GstSegment segment;
   /* curent stream group */
   guint group_id;
+  gboolean group_done;
 
   /* resmapler for trick play*/
   SpeexResamplerState *src;
@@ -906,7 +907,7 @@ static GstFlowReturn sink_drain (GstAmlHalAsink * sink)
    * arrange to have clock running when going to PLAYING again */
   g_atomic_int_set (&sink->eos_rendering, 1);
 
-  if (priv->eos_time != -1) {
+  if (priv->eos_time != -1 && !priv->group_done) {
     GstClockReturn cret;
     GST_DEBUG_OBJECT (sink,
         "last sample time %" GST_TIME_FORMAT,
@@ -1100,6 +1101,7 @@ gst_aml_hal_asink_event (GstAmlHalAsink *sink, GstEvent * event)
       GST_DEBUG_OBJECT (sink, "group change from %d to %d",
           priv->group_id, group_id);
       priv->group_id = group_id;
+      priv->group_done = FALSE;
       GST_DEBUG_OBJECT (sink, "stream start, gid %d", group_id);
       return GST_BASE_SINK_CLASS (parent_class)->event (bsink, event);
     }
@@ -1117,6 +1119,7 @@ gst_aml_hal_asink_event (GstAmlHalAsink *sink, GstEvent * event)
       GST_OBJECT_LOCK (sink);
       hal_stop (sink);
       tsync_enable (sink, TRUE);
+      priv->group_done = TRUE;
       GST_OBJECT_UNLOCK (sink);
       gst_aml_hal_asink_reset_sync (sink);
     }
