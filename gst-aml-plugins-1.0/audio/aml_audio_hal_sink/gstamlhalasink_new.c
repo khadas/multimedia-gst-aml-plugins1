@@ -234,6 +234,8 @@ static int get_sysfs_uint32(const char *path, uint32_t *value);
 static int tsync_enable (GstAmlHalAsink * sink, gboolean enable);
 static void dump(const char* path, const uint8_t *data, int size);
 
+static int tsync_send_audio_pause(void);
+
 static void
 gst_aml_hal_asink_class_init (GstAmlHalAsinkClass * klass)
 {
@@ -393,14 +395,11 @@ get_position (GstAmlHalAsink* sink, GstFormat format, gint64 * cur)
 
   GST_LOG_OBJECT (sink, "POSITION: %" GST_TIME_FORMAT,
       GST_TIME_ARGS (*cur));
-
   if (GST_FORMAT_TIME != format) {
     gboolean ret;
 
     /* convert to final format */
-    GST_OBJECT_LOCK (sink);
     ret = gst_audio_info_convert (&priv->spec.info, GST_FORMAT_TIME, *cur, format, cur);
-    GST_OBJECT_UNLOCK (sink);
     if (!ret)
       return FALSE;
   }
@@ -1416,6 +1415,7 @@ gst_aml_hal_asink_change_state (GstElement * element,
     {
       GST_DEBUG_OBJECT(sink, "playing to paused");
       GST_OBJECT_LOCK (sink);
+      tsync_send_audio_pause();
       hal_pause (sink);
       GST_OBJECT_UNLOCK (sink);
 
@@ -1735,6 +1735,13 @@ static int config_sys_node(const char* path, const char* value)
   close(fd);
 
   return 0;
+}
+
+static int tsync_send_audio_pause(void)
+{
+  char *val;
+  val = "AUDIO_PAUSE";
+  return config_sys_node(TSYNC_EVENT, val);
 }
 
 static int tsync_enable (GstAmlHalAsink * sink, gboolean enable)
