@@ -1111,11 +1111,11 @@ gst_aml_hal_asink_event (GstAmlHalAsink *sink, GstEvent * event)
 
       gst_event_parse_stream_group_done (event, &group_id);
       if (priv->group_id != group_id) {
-        GST_ERROR_OBJECT (sink, "group id not match: %d vs %d",
+        GST_WARNING_OBJECT (sink, "group id not match: %d vs %d",
             priv->group_id, group_id);
-        goto done;
+      } else {
+        GST_DEBUG_OBJECT (sink, "stream group done, gid %d", group_id);
       }
-      GST_DEBUG_OBJECT (sink, "stream group done, gid %d", group_id);
       GST_OBJECT_LOCK (sink);
       hal_stop (sink);
       tsync_enable (sink, TRUE);
