@@ -825,11 +825,7 @@ static void gst_aml_hal_asink_get_times (GstBaseSink * bsink, GstBuffer * buffer
 
 static void sink_force_start (GstAmlHalAsink * sink)
 {
-  /* Set the eos_rendering flag so sub-classes definitely start the clock.
-   * FIXME 2.0: Pass this as a flag to gst_audio_ring_buffer_start() */
-  g_atomic_int_set (&sink->eos_rendering, 1);
   hal_start (sink);
-  g_atomic_int_set (&sink->eos_rendering, 0);
 }
 
 static GstClockReturn sink_wait_clock (GstAmlHalAsink * sink, GstClockTime time)
@@ -903,9 +899,6 @@ static GstFlowReturn sink_drain (GstAmlHalAsink * sink)
     return ret;
 
   GST_DEBUG_OBJECT (sink, "draining");
-  /* if PLAYING is interrupted,
-   * arrange to have clock running when going to PLAYING again */
-  g_atomic_int_set (&sink->eos_rendering, 1);
 
   if (priv->eos_time != -1 && !priv->group_done) {
     GstClockReturn cret;
@@ -923,7 +916,6 @@ static GstFlowReturn sink_drain (GstAmlHalAsink * sink)
     else
       ret = GST_FLOW_ERROR;
   }
-  g_atomic_int_set (&sink->eos_rendering, 0);
   return ret;
 }
 
@@ -933,13 +925,10 @@ gst_aml_hal_asink_wait_event (GstBaseSink * bsink, GstEvent * event)
   GstAmlHalAsink *sink = GST_AML_HAL_ASINK (bsink);
   GstAmlHalAsinkPrivate *priv = sink->priv;
   GstFlowReturn ret = GST_FLOW_OK;
-  gboolean clear_force_start_flag = FALSE;
 
-  /* For both gap and EOS events, make sure the ringbuffer is running
-   * before trying to wait on the event! */
   switch (GST_EVENT_TYPE (event)) {
     case GST_EVENT_GAP:
-      /* We must have a negotiated format before starting the ringbuffer */
+      /* We must have a negotiated format before starting */
       if (G_UNLIKELY (!priv->stream_)) {
         GST_ELEMENT_ERROR (sink, STREAM, FORMAT, (NULL),
             ("Sink not negotiated before %s event.",
@@ -950,21 +939,11 @@ gst_aml_hal_asink_wait_event (GstBaseSink * bsink, GstEvent * event)
       GST_OBJECT_LOCK (sink);
       sink_force_start (sink);
       GST_OBJECT_UNLOCK (sink);
-      /* Make sure the ringbuffer will start again if interrupted during event_wait() */
-      g_atomic_int_set (&sink->eos_rendering, 1);
-      clear_force_start_flag = TRUE;
       break;
     default:
       break;
   }
 
-  ret = GST_BASE_SINK_CLASS (parent_class)->wait_event (bsink, event);
-  if (ret != GST_FLOW_OK)
-    goto done;
-
-done:
-  if (clear_force_start_flag)
-    g_atomic_int_set (&sink->eos_rendering, 0);
   return ret;
 }
 

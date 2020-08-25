@@ -46,8 +46,6 @@ struct _GstAmlHalAsink {
   GstBaseSink         element;
   /* clock */
   GstClock           *provided_clock;
-  /* with g_atomic_; currently rendering eos */
-  gboolean            eos_rendering;
   /*< private >*/
   GstAmlHalAsinkPrivate *priv;
 };
