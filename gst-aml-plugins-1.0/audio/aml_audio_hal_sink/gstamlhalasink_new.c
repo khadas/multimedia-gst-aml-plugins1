@@ -2137,6 +2137,10 @@ static guint hal_commit (GstAmlHalAsink * sink, guchar * data,
     }
     if (priv->direct_mode_) {
       struct hw_sync_header_v2 *hw_sync;
+      uint32_t pts_32 = gst_util_uint64_scale_int (pts_64, PTS_90K, GST_SECOND);
+
+      //truncate to 32bit PTS
+      pts_64 = gst_util_uint64_scale_int(pts_32, GST_SECOND, PTS_90K);
 
       if (!trans) {
         hw_sync = (struct hw_sync_header_v2 *)priv->trans_buf;
