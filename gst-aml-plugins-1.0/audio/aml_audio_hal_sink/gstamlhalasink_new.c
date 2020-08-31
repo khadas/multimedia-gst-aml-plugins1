@@ -553,10 +553,13 @@ static GstClockTime gst_aml_hal_asink_get_time (GstClock * clock, GstAmlHalAsink
 static gdouble
 gst_aml_hal_sink_get_volume (GstAmlHalAsink * sink)
 {
-  GST_LOG_OBJECT(sink, "return vol %f", sink->priv->volume_);
-  return sink->priv->volume_;
-}
+  double result;
 
+  result = gst_stream_volume_convert_volume(GST_STREAM_VOLUME_FORMAT_DB,
+    GST_STREAM_VOLUME_FORMAT_LINEAR, sink->priv->volume_);
+  GST_LOG_OBJECT(sink, "return vol %f", result);
+  return result;
+}
 
 static void
 gst_aml_hal_sink_set_volume (GstAmlHalAsink * sink, gdouble volume)
