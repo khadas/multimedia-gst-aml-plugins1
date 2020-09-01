@@ -60,6 +60,8 @@ GST_DEBUG_CATEGORY_STATIC (gst_aml_hal_asink_debug_category);
 #define TSYNC_EVENT  "/sys/class/tsync/event"
 #define TSYNC_MODE   "/sys/class/tsync/mode"
 #define TSYNC_PCRSCR "/sys/class/tsync/pts_pcrscr"
+#define AUDIO_PAUSE_EVENT "AUDIO_PAUSE"
+#define AUDIO_RESUME_EVENT "AUDIO_RESUME"
 #define PTS_90K 90000
 
 #ifdef DUMP_TO_FILE
@@ -233,8 +235,7 @@ static int config_sys_node(const char* path, const char* value);
 static int get_sysfs_uint32(const char *path, uint32_t *value);
 static int tsync_enable (GstAmlHalAsink * sink, gboolean enable);
 static void dump(const char* path, const uint8_t *data, int size);
-
-static int tsync_send_audio_pause(void);
+static int tsync_send_audio_event(const char* event);
 
 static void
 gst_aml_hal_asink_class_init (GstAmlHalAsinkClass * klass)
@@ -1397,7 +1398,6 @@ gst_aml_hal_asink_change_state (GstElement * element,
     {
       GST_DEBUG_OBJECT(sink, "playing to paused");
       GST_OBJECT_LOCK (sink);
-      tsync_send_audio_pause();
       hal_pause (sink);
       GST_OBJECT_UNLOCK (sink);
 
@@ -1719,7 +1719,7 @@ static int config_sys_node(const char* path, const char* value)
   return 0;
 }
 
-static int tsync_send_audio_pause(void)
+static int tsync_send_audio_event(const char* event)
 {
   char *val;
   val = "AUDIO_PAUSE";
@@ -1759,18 +1759,15 @@ static gboolean hal_start (GstAmlHalAsink * sink)
     GST_INFO_OBJECT (sink, "stream not created yet");
     priv->paused_ = FALSE;
   } else {
+    tsync_send_audio_event(AUDIO_RESUME_EVENT);
     g_mutex_lock(&priv->feed_lock);
     if (priv->paused_) {
       int ret;
 
       ret = priv->stream_->resume(priv->stream_);
-      if (ret && ret != HAL_WRONG_STAT) {
-        /* Not be in paused state due to flush,
-         * so resume may fail */
-        g_mutex_unlock(&priv->feed_lock);
-        GST_ERROR_OBJECT (sink, "resume failure:%d", ret);
-        return FALSE;
-      }
+      if (ret)
+        GST_WARNING_OBJECT (sink, "resume failure:%d", ret);
+
       GST_DEBUG_OBJECT (sink, "resume");
       priv->paused_ = FALSE;
       g_cond_signal (&priv->run_ready);
@@ -1793,6 +1790,7 @@ static gboolean hal_pause (GstAmlHalAsink * sink)
     return FALSE;
   }
 
+  tsync_send_audio_event(AUDIO_PAUSE_EVENT);
   g_mutex_lock(&priv->feed_lock);
   if (priv->paused_) {
     g_mutex_unlock(&priv->feed_lock);
@@ -1801,11 +1799,9 @@ static gboolean hal_pause (GstAmlHalAsink * sink)
   }
 
   ret = priv->stream_->pause(priv->stream_);
-  if (ret) {
-    g_mutex_unlock(&priv->feed_lock);
-    GST_ERROR_OBJECT (sink, "pause failure:%d", ret);
-    return FALSE;
-  }
+  if (ret)
+    GST_WARNING_OBJECT (sink, "pause failure:%d", ret);
+
   priv->paused_ = TRUE;
   g_mutex_unlock(&priv->feed_lock);
   GST_INFO_OBJECT (sink, "done");
