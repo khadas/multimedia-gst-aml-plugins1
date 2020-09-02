@@ -228,7 +228,6 @@ static gboolean hal_release (GstAmlHalAsink * sink);
 static gboolean hal_start (GstAmlHalAsink * sink);
 static gboolean hal_pause (GstAmlHalAsink * sink);
 static gboolean hal_stop (GstAmlHalAsink * sink);
-static void hal_clear (GstAmlHalAsink * sink);
 static guint hal_commit (GstAmlHalAsink * sink, guchar * data, gint size, guint64 pts_64);
 static uint32_t hal_get_latency (GstAmlHalAsink * sink);
 static int config_sys_node(const char* path, const char* value);
@@ -909,6 +908,7 @@ static GstFlowReturn sink_drain (GstAmlHalAsink * sink)
         "last sample time %" GST_TIME_FORMAT,
         GST_TIME_ARGS (priv->eos_time));
 
+    hal_commit (sink, NULL, 0, -1);
     /* wait for the EOS time to be reached, this is the time when the last
      * sample is played. */
     cret = sink_wait_clock (sink, priv->eos_time);
@@ -1416,7 +1416,6 @@ gst_aml_hal_asink_change_state (GstElement * element,
       /* make sure we unblock before calling the parent state change
        * so it can grab the STREAM_LOCK */
       GST_OBJECT_LOCK (sink);
-      hal_clear (sink);
       hal_release (sink);
       priv->quit_clock_wait = TRUE;
       if (priv->src) {
@@ -1837,39 +1836,6 @@ static gboolean hal_stop (GstAmlHalAsink * sink)
   return TRUE;
 }
 
-#define FLUSH_DATA_SIZE (32*1024)
-static void hal_clear (GstAmlHalAsink * sink)
-{
-  GstAmlHalAsinkPrivate *priv = sink->priv;
-  gboolean raw_data;
-
-  GST_DEBUG_OBJECT (sink, "clear");
-  if (!priv->stream_)
-    return;
-
-  raw_data = is_raw_type(priv->spec.type);
-  if (raw_data) {
-    /* for pcm padding enough 0 to flush the data out */
-    gint total = FLUSH_DATA_SIZE;
-    gint written = 0;
-
-    guchar *data = (guchar *)g_malloc(FLUSH_DATA_SIZE);
-    if (!data) {
-      GST_ERROR_OBJECT (sink, "oom");
-      return;
-    }
-    memset(data, 0, FLUSH_DATA_SIZE);
-    while (total) {
-      written = priv->stream_->write(priv->stream_, data, total);
-      total -= written;
-    }
-    g_free(data);
-    GST_DEBUG_OBJECT (sink, "clear done");
-  } else {
-    GST_DEBUG_OBJECT (sink, "flush bitstream frame_sent:%d", priv->frame_sent);
-  }
-}
-
 static guint table_5_13[38][4] = {
   {96, 69, 64, 32},
   {96, 70, 64, 32},
@@ -2086,13 +2052,14 @@ static guint hal_commit (GstAmlHalAsink * sink, guchar * data,
   raw_data = is_raw_type(priv->spec.type);
   towrite = size;
 
-  dump ("/data/asink_", data, towrite);
+  if (towrite)
+    dump ("/data/asink_", data, towrite);
 
   /* Frame aligned */
   /* AC4 has constant bit rate (CBR) and variable bit reate(VBR) streams
    * And VBR doesn't have to be encoded size aligned
    */
-  if (!raw_data && priv->format_ != AUDIO_FORMAT_AC4) {
+  if (towrite && !raw_data && priv->format_ != AUDIO_FORMAT_AC4) {
     while (!parse_bit_stream(sink, data + parsed, towrite - parsed)
             && parsed < towrite)
       parsed += priv->encoded_size;
@@ -2101,6 +2068,18 @@ static guint hal_commit (GstAmlHalAsink * sink, guchar * data,
       //dump("/tmp/err.dat", data, towrite);
       return 0;
     }
+  }
+
+  /* notify EOS */
+  if (!towrite && priv->direct_mode_) {
+    struct hw_sync_header_v2 header;
+
+    hw_sync_set_ver(&header);
+    hw_sync_set_size(&header, 0);
+    hw_sync_set_pts(&header, -1);
+    hw_sync_set_offset(&header, 0);
+    priv->stream_->write(priv->stream_, &header, hw_header_s);
+    return 0;
   }
 
   while (towrite > 0) {
