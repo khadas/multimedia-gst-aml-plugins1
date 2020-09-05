@@ -116,6 +116,12 @@ struct _GstAmlHalAsinkPrivate
   GstClockTime last_ts;
   guint64 render_samples;
 
+  /* for position */
+  guint wrapping_time;
+  uint32_t last_pcr;
+  uint32_t first_pts;
+  gboolean first_pts_set;
+
   GstSegment segment;
   /* curent stream group */
   guint group_id;
@@ -384,17 +390,36 @@ get_position (GstAmlHalAsink* sink, GstFormat format, gint64 * cur)
 {
   GstAmlHalAsinkPrivate *priv = sink->priv;
   uint32_t pcr = 0;
+  gint64 timepassed_90k, timepassed;
 
   if (!priv->tsync_enable_ || !priv->render_samples) {
     *cur = 0;
     return TRUE;
   }
 
-  get_sysfs_uint32(TSYNC_PCRSCR, &pcr);
-  *cur = gst_util_uint64_scale_int (pcr, GST_SECOND, PTS_90K);
+  if (!priv->direct_mode_) {
+    GST_WARNING_OBJECT(sink, "not well implemented");
+    *cur = gst_util_uint64_scale_int(priv->render_samples, GST_SECOND, priv->sr_);
+    GST_LOG_OBJECT (sink, "POSITION: %" GST_TIME_FORMAT, GST_TIME_ARGS (*cur));
+    return FALSE;
+  }
 
-  GST_LOG_OBJECT (sink, "POSITION: %" GST_TIME_FORMAT,
-      GST_TIME_ARGS (*cur));
+  get_sysfs_uint32(TSYNC_PCRSCR, &pcr);
+  if (priv->last_pcr > 0xF0000000 && pcr < 10*PTS_90K) {
+    priv->wrapping_time++;
+    GST_INFO_OBJECT (sink, "pts wrapping num: %d", priv->wrapping_time);
+  }
+  priv->last_pcr = pcr;
+
+  if (priv->wrapping_time <= 1)
+    timepassed_90k = (int)(pcr - priv->first_pts);
+  else
+    timepassed_90k = (int)(pcr - priv->first_pts) + (priv->wrapping_time-1)*0xFFFFFFFFLL;
+
+  timepassed = gst_util_uint64_scale_int (timepassed_90k, GST_SECOND, PTS_90K);
+  *cur += priv->segment.start + timepassed;
+
+  GST_LOG_OBJECT (sink, "POSITION: %" GST_TIME_FORMAT, GST_TIME_ARGS (*cur));
   if (GST_FORMAT_TIME != format) {
     gboolean ret;
 
@@ -814,6 +839,9 @@ static inline void gst_aml_hal_asink_reset_sync (GstAmlHalAsink * sink)
   priv->last_ts = GST_CLOCK_TIME_NONE;
   priv->render_samples = 0;
   priv->flushing_ = FALSE;
+  priv->first_pts_set = FALSE;
+  priv->wrapping_time = 0;
+  priv->last_pcr = 0;
 }
 
 static void gst_aml_hal_asink_get_times (GstBaseSink * bsink, GstBuffer * buffer,
@@ -2147,6 +2175,12 @@ static guint hal_commit (GstAmlHalAsink * sink, guchar * data,
       hw_sync_set_pts(hw_sync, pts_64);
       hw_sync_set_offset(hw_sync, 0);
       cur_size += hw_header_s;
+
+      if (!priv->first_pts_set) {
+         priv->first_pts_set = TRUE;
+         priv->first_pts = pts_32;
+         GST_INFO_OBJECT(sink, "update first PTS %x", pts_32);
+      }
     }
 
     if (trans) {
