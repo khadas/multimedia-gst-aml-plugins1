@@ -836,6 +836,7 @@ static inline void gst_aml_hal_asink_reset_sync (GstAmlHalAsink * sink)
   GstAmlHalAsinkPrivate *priv = sink->priv;
 
   priv->eos_time = -1;
+  priv->eos = FALSE;
   priv->last_ts = GST_CLOCK_TIME_NONE;
   priv->render_samples = 0;
   priv->flushing_ = FALSE;
