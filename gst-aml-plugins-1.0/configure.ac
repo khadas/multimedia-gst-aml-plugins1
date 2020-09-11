@@ -25,6 +25,15 @@ dnl required version of libtool
 LT_PREREQ([2.2.6])
 LT_INIT
 
+AC_ARG_ENABLE([aml_default],
+              [  --enable_default Turn on compile adec, vdec, asink, vsink],
+              [case "${enableval}" in
+               yes) aml_default=true ;;
+               no)  aml_default=false ;;
+               *) AC_MSG_ERROR([bad value ${enableval} for --enable_default]) ;;
+             esac],[aml_default=false])
+AM_CONDITIONAL([AML_GST1_PLUG_DEFAULT], [test x$aml_default = xtrue])
+
 AC_ARG_ENABLE([aml_audio_hal_sink],
               [  --enable_aml_audio_hal_sink    Turn on compile aml_audio_hal_sink],
               [case "${enableval}" in

@@ -1,4 +1,8 @@
-SUBDIRS = common video/amlvdec video/amlvsink audio/amladec audio/amlasink
+SUBDIRS = common
+
+if AML_GST1_PLUG_DEFAULT
+SUBDIRS += video/amlvdec video/amlvsink audio/amladec audio/amlasink
+endif
 
 if AML_AUDIO_HAL_SINK_ENABLE
 SUBDIRS += audio/aml_audio_hal_sink
