@@ -2,12 +2,11 @@ dnl required version of autoconf
 AC_PREREQ([2.53])
 
 dnl TODO: fill in your package name and package version here
-AC_INIT([amlhalasink-plugin-package],[1.0.0])
+AC_INIT([amlgst-plugin-package],[1.0.0])
 
 dnl required versions of gstreamer and plugins-base
 GST_REQUIRED=1.0.0
 GSTPB_REQUIRED=1.0.0
-SPEEX_REQUIRED=1.2
 
 AC_CONFIG_SRCDIR([video/amlvdec/gstamlvdec.c])
 AC_CONFIG_HEADERS([config.h])
@@ -34,16 +33,6 @@ AC_ARG_ENABLE([aml_default],
              esac],[aml_default=false])
 AM_CONDITIONAL([AML_GST1_PLUG_DEFAULT], [test x$aml_default = xtrue])
 
-AC_ARG_ENABLE([aml_audio_hal_sink],
-              [  --enable_aml_audio_hal_sink    Turn on compile aml_audio_hal_sink],
-              [case "${enableval}" in
-               yes) aml_audio_hal_sink=true ;;
-               no)  aml_audio_hal_sink=false ;;
-               *) AC_MSG_ERROR([bad value ${enableval} for --enable_aml_audio_hal_sink]) ;;
-             esac],[aml_audio_hal_sink=false])
-AM_CONDITIONAL([AML_AUDIO_HAL_SINK_ENABLE], [test x$aml_audio_hal_sink = xtrue])
-
-
 dnl give error and exit if we don't have pkgconfig
 AC_CHECK_PROG(HAVE_PKGCONFIG, pkg-config, [ ], [
   AC_MSG_ERROR([You need to have pkg-config installed!])
@@ -66,7 +55,6 @@ PKG_CHECK_MODULES(GST, [
   gstreamer-1.0 >= $GST_REQUIRED
   gstreamer-base-1.0 >= $GST_REQUIRED
   gstreamer-controller-1.0 >= $GST_REQUIRED
-  speexdsp >= $SPEEX_REQUIRED
 ], [
   AC_SUBST(GST_CFLAGS)
   AC_SUBST(GST_LIBS)
@@ -109,6 +97,6 @@ video/amlvdec/Makefile
 video/amlvsink/Makefile
 audio/amladec/Makefile
 audio/amlasink/Makefile
-audio/aml_audio_hal_sink/Makefile])
+])
 AC_OUTPUT
 

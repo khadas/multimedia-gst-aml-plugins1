@@ -10,15 +10,10 @@ GST_AML_PLUGINS1_SITE_METHOD = local
 
 GST_AML_PLUGINS1_INSTALL_STAGING = YES
 GST_AML_PLUGINS1_AUTORECONF = YES
-GST_AML_PLUGINS1_DEPENDENCIES = gstreamer1 host-pkgconf libplayer speexdsp
+GST_AML_PLUGINS1_DEPENDENCIES = gstreamer1 host-pkgconf libplayer
 
 ifeq ($(BR2_PACKAGE_GST_AML_PLUGINS1_DEFAULT),y)
 GST_AML_PLUGINS1_CONF_OPTS += --enable-aml-default
-endif
-
-ifeq ($(BR2_PACKAGE_GST_AML_PLUGINS1_AUDIO_HAL_SINK),y)
-GST_AML_PLUGINS1_DEPENDENCIES += hal_audio_service
-GST_AML_PLUGINS1_CONF_OPTS += --enable-aml-audio-hal-sink
 endif
 
 $(eval $(autotools-package))
