@@ -17,10 +17,10 @@ plugin_LTLIBRARIES = libgstamlasink.la
 libgstamlasink_la_SOURCES = gstamlasink.c gstamlasink.h amlasink_prop.c amlasink_prop.h
 
 # compiler and linker flags used to compile this plugin, set in configure.ac
-libgstamlasink_la_CFLAGS = $(GST_CFLAGS) -I../../common/amlsysctl -I../../common/amstreaminfo
+libgstamlasink_la_CFLAGS = $(GST_CFLAGS) -I$(top_srcdir)/common/amlsysctl -I$(top_srcdir)/common/amstreaminfo
 libgstamlasink_la_LIBADD = $(GST_LIBS) -lgstaudio-1.0
 libgstamlasink_la_LDFLAGS = $(GST_PLUGIN_LDFLAGS)
-libgstamlasink_la_LIBADD += ../../common/libcommon.a -L$(TARGET_DIR)/usr/lib -lamcodec -lamadec -lamavutils -lamplayer
+libgstamlasink_la_LIBADD += $(top_builddir)/common/libcommon.a -L$(TARGET_DIR)/usr/lib -lamcodec -lamadec -lamavutils -lamplayer
 libgstamlasink_la_LIBTOOLFLAGS = --tag=disable-static
 
 # headers we need but don't want installed

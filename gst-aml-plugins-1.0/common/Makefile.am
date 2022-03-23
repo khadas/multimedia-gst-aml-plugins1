@@ -14,8 +14,8 @@ lib_LIBRARIES = libcommon.a
 ##############################################################################
 
 # sources used to compile this plug-in
-libcommon_a_SOURCES = amlsysctl/gstamlsysctl.c amlsysctl/gstamlsysctl.h amstreaminfo/amlstreaminfo.c amstreaminfo/amlstreaminfo.h amstreaminfo/amlutils.c amstreaminfo/amlutils.h
+libcommon_a_SOURCES = $(top_srcdir)/common/amlsysctl/gstamlsysctl.c $(top_srcdir)/common/amlsysctl/gstamlsysctl.h $(top_srcdir)/common/amstreaminfo/amlstreaminfo.c $(top_srcdir)/common/amstreaminfo/amlstreaminfo.h $(top_srcdir)/common/amstreaminfo/amlutils.c $(top_srcdir)/common/amstreaminfo/amlutils.h
 
 # compiler and linker flags used to compile this plugin, set in configure.ac
 libcommon_a_CFLAGS = $(GST_CFLAGS) -fPIC
-noinst_HEADERS = amlsysctl/gstamlsysctl.h amstreaminfo/amlstreaminfo.h amstreaminfo/amlutils.h
+noinst_HEADERS = $(top_srcdir)/common/amlsysctl/gstamlsysctl.h $(top_srcdir)/common/amstreaminfo/amlstreaminfo.h $(top_srcdir)/common/amstreaminfo/amlutils.h
